@@ -2,24 +2,15 @@ package com.example.detectcamera;
 
 import android.content.pm.PackageManager;
 import android.util.Log;
-
 import java.io.OutputStream;
-
 import rikka.shizuku.Shizuku;
 
 public class MediaProjectionHelper {
 
-    private static final String TAG = "MediaProjectionHelper";
-
     public static boolean isShizukuAvailable() {
         try {
-            boolean ping = Shizuku.pingBinder();
-            int perm = Shizuku.checkSelfPermission();
-            boolean granted = (perm == PackageManager.PERMISSION_GRANTED);
-            Log.d(TAG, "Shizuku ping=" + ping + ", perm=" + perm + ", granted=" + granted);
-            return ping && granted;
+            return Shizuku.pingBinder() && Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
         } catch (Exception e) {
-            Log.e(TAG, "Error checking Shizuku", e);
             return false;
         }
     }
@@ -27,15 +18,11 @@ public class MediaProjectionHelper {
     public static boolean otorgarConsentimientoShizuku(String packageName) {
         String cmd1 = "appops set " + packageName + " PROJECT_MEDIA allow";
         String cmd2 = "pm grant " + packageName + " android.permission.PROJECT_MEDIA";
-        String cmd3 = "appops set " + packageName + " SYSTEM_ALERT_WINDOW allow";
-        return ejecutarComandoShell(cmd1) && ejecutarComandoShell(cmd2) && ejecutarComandoShell(cmd3);
+        return ejecutarComandoShell(cmd1) && ejecutarComandoShell(cmd2);
     }
 
     public static boolean ejecutarComandoShell(String command) {
-        if (!isShizukuAvailable()) {
-            Log.w(TAG, "Shizuku no disponible para ejecutar: " + command);
-            return false;
-        }
+        if (!isShizukuAvailable()) return false;
 
         try {
             Process process = Shizuku.newProcess(new String[]{"sh"}, null, null);
@@ -44,16 +31,9 @@ public class MediaProjectionHelper {
             os.write("exit\n".getBytes());
             os.flush();
             os.close();
-            int exitCode = process.waitFor();
-            if (exitCode == 0) {
-                Log.i(TAG, "Comando ejecutado: " + command);
-                return true;
-            } else {
-                Log.e(TAG, "Comando falló: " + command + " (código " + exitCode + ")");
-                return false;
-            }
+            return process.waitFor() == 0;
         } catch (Exception e) {
-            Log.e(TAG, "Error ejecutando comando: " + command, e);
+            Log.e("MediaProjectionHelper", "Error ejecutando comando shell: " + e.getMessage());
             return false;
         }
     }
