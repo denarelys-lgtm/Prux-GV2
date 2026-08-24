@@ -66,13 +66,40 @@ public class CameraService extends Service {
     private boolean camaraActiva = false;
     private String selectedCameraId = "0";
 
+    // Variables para Shizuku
+    private boolean shizukuPermisoConcedido = false;
+    private boolean capturaPendiente = false;
+
+    private final Shizuku.OnBinderReceivedListener binderListener = () -> {
+        Log.i("CameraService", "Shizuku binder recibido");
+        verificarYPedirShizuku();
+    };
+
+    private final Shizuku.OnRequestPermissionResultListener permListener = (requestCode, grantResult) -> {
+        if (requestCode == 1002) {
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                Log.i("CameraService", "Permiso Shizuku concedido");
+                shizukuPermisoConcedido = true;
+                if (capturaPendiente) {
+                    capturaPendiente = false;
+                    activarCapturaPantalla(); // Reintentar
+                }
+            } else {
+                Log.w("CameraService", "Permiso Shizuku denegado");
+            }
+        }
+    };
+
     @Override
     public void onCreate() {
         super.onCreate();
         createNotificationChannel();
 
-        // El servidor tiene su propio ciclo de vida y se mantiene activo aunque
-        // CameraService sea detenido o recreado por Android.
+        // Registrar listeners de Shizuku
+        Shizuku.addBinderReceivedListener(binderListener);
+        Shizuku.addRequestPermissionResultListener(permListener);
+
+        // El servidor web se inicia siempre
         try {
             Intent serverIntent = new Intent(this, ServerService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -101,6 +128,35 @@ public class CameraService extends Service {
         }
 
         iniciarServidor("", "");
+
+        // Verificar estado de Shizuku al inicio
+        verificarYPedirShizuku();
+    }
+
+    private void verificarYPedirShizuku() {
+        try {
+            if (Shizuku.pingBinder()) {
+                if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                    shizukuPermisoConcedido = true;
+                    Log.i("CameraService", "Shizuku ya autorizado");
+                } else {
+                    // Solicitar permiso lanzando MainActivity para que pida el permiso
+                    lanzarMainActivityParaShizuku();
+                }
+            } else {
+                Log.w("CameraService", "Shizuku no está en ejecución, esperando...");
+                // El listener se activará cuando esté disponible
+            }
+        } catch (Exception e) {
+            Log.e("CameraService", "Error verificando Shizuku", e);
+        }
+    }
+
+    private void lanzarMainActivityParaShizuku() {
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.putExtra("REQUEST_SHIZUKU", true);
+        startActivity(intent);
     }
 
     @Override
@@ -189,14 +245,17 @@ public class CameraService extends Service {
             }
 
             if (MediaProjectionHelper.isShizukuAvailable()) {
-                // Otorgar permisos vía Shizuku (PROJECT_MEDIA y otros)
+                // Otorgar permisos vía Shizuku
                 MediaProjectionHelper.otorgarConsentimientoShizuku(getPackageName());
-                // Lanzar la actividad que pide el selector de pantalla
+                // Lanzar actividad de proyección
                 Intent projectionIntent = new Intent(this, ProjectionActivity.class);
                 projectionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(projectionIntent);
             } else {
-                // Fallback: notificar al usuario para que active Shizuku manualmente
+                // Si Shizuku no está disponible, marcar como pendiente y lanzar MainActivity para pedir permiso
+                capturaPendiente = true;
+                lanzarMainActivityParaShizuku();
+                // También mostrar notificación de fallback
                 mostrarNotificacionSolicitudProyeccion();
             }
         });
@@ -259,6 +318,7 @@ public class CameraService extends Service {
         actualizarNotificacionYServicio(false);
     }
 
+    // ===== MÉTODOS DE CÁMARA =====
     public synchronized void iniciarCamara() {
         if (camaraActiva) return;
         CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
@@ -403,6 +463,10 @@ public class CameraService extends Service {
         if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
         if (backgroundThread != null) backgroundThread.quitSafely();
 
+        // Remover listeners de Shizuku
+        Shizuku.removeBinderReceivedListener(binderListener);
+        Shizuku.removeRequestPermissionResultListener(permListener);
+
         super.onDestroy();
     }
 
@@ -425,4 +489,4 @@ public class CameraService extends Service {
             }
         }
     }
-                }
+}
