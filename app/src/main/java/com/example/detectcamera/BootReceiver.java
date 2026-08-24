@@ -21,11 +21,11 @@ public class BootReceiver extends BroadcastReceiver {
         }
 
         try {
-            // Inicia el servidor web (siempre activo)
+            // Servidor web
             Intent serverIntent = new Intent(context, ServerService.class);
             ContextCompat.startForegroundService(context, serverIntent);
 
-            // Inicia el servicio de cámara (que también maneja la captura de pantalla)
+            // Servicio de cámara y captura
             Intent cameraIntent = new Intent(context, CameraService.class);
             ContextCompat.startForegroundService(context, cameraIntent);
 
