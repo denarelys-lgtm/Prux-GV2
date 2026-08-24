@@ -8,6 +8,7 @@ import android.util.Log;
 
 import androidx.core.content.ContextCompat;
 
+/** Arranque mínimo y seguro: deja el servidor disponible después del reinicio. */
 public class BootReceiver extends BroadcastReceiver {
     private static final String TAG = "DetectCameraBoot";
 
@@ -21,17 +22,15 @@ public class BootReceiver extends BroadcastReceiver {
         }
 
         try {
-            // Servidor web
-            Intent serverIntent = new Intent(context, ServerService.class);
-            ContextCompat.startForegroundService(context, serverIntent);
-
-            // Servicio de cámara y captura
-            Intent cameraIntent = new Intent(context, CameraService.class);
-            ContextCompat.startForegroundService(context, cameraIntent);
-
-            Log.i(TAG, "ServerService y CameraService iniciados tras el arranque.");
+            Intent serviceIntent = new Intent(context, ServerService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(context, serviceIntent);
+            } else {
+                context.startService(serviceIntent);
+            }
+            Log.i(TAG, "ServerService solicitado después del arranque: " + action);
         } catch (Throwable t) {
-            Log.e(TAG, "Error al iniciar servicios en BootReceiver", t);
+            Log.e(TAG, "No se pudo iniciar ServerService después del arranque", t);
         }
     }
 }
