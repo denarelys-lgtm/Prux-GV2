@@ -54,6 +54,11 @@ public class MainActivity extends AppCompatActivity {
 
         verificarYSolicitarPermisos();
         verificarYPedirShizuku();
+
+        // Si la actividad se lanza desde CameraService para pedir Shizuku
+        if (getIntent().getBooleanExtra("REQUEST_SHIZUKU", false)) {
+            verificarYPedirShizuku();
+        }
     }
 
     private void verificarYPedirShizuku() {
@@ -62,7 +67,6 @@ public class MainActivity extends AppCompatActivity {
                 if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
                     Toast.makeText(this, "Shizuku ya autorizado", Toast.LENGTH_SHORT).show();
                 } else {
-                    // Solicita el permiso directamente lanzando la ventana emergente
                     Shizuku.requestPermission(SHIZUKU_CODE);
                 }
             } else {
@@ -77,6 +81,7 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == SHIZUKU_CODE) {
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
                 Toast.makeText(this, "Shizuku vinculado con éxito", Toast.LENGTH_SHORT).show();
+                // Si la captura estaba pendiente en CameraService, se reintentará automáticamente
             } else {
                 Toast.makeText(this, "Permiso de Shizuku denegado", Toast.LENGTH_SHORT).show();
             }
@@ -147,8 +152,12 @@ public class MainActivity extends AppCompatActivity {
         } else {
             registerReceiver(receiverIp, new IntentFilter("com.example.detectcamera.UPDATE_IP"));
         }
-        // Vuelve a comprobar el estado de Shizuku al volver a primer plano
-        verificarYPedirShizuku();
+        // Reintentar pedir Shizuku si se necesita
+        if (getIntent().getBooleanExtra("REQUEST_SHIZUKU", false)) {
+            verificarYPedirShizuku();
+            // Limpiar el extra para que no se repita
+            getIntent().removeExtra("REQUEST_SHIZUKU");
+        }
     }
 
     @Override
