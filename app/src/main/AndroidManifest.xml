@@ -3,15 +3,25 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Permiso de API Shizuku -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <!-- Permisos de Red y Conectividad -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Permisos de Mantenimiento y Sistema -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Permisos de Hardware -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Permisos para Servicios en Primer Plano (Foreground) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
@@ -28,20 +38,26 @@
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
         tools:ignore="MissingApplicationIcon">
 
+        <!-- Provider requerido por Shizuku para exponer la app al demonio -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
             android:enabled="true"
             android:exported="true"
-            android:permission="moe.shizuku.manager.permission.API_V23" />
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
+        <!-- Actividad Transparente para Iniciar MediaProjection -->
+        <!-- Arranque automático del servidor después del reinicio. -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -53,6 +69,7 @@
             </intent-filter>
         </receiver>
 
+        <!-- Servicio que mantiene vivo únicamente el servidor. -->
         <service
             android:name=".ServerService"
             android:enabled="true"
@@ -72,12 +89,14 @@
             android:noHistory="true"
             android:launchMode="singleInstance" />
 
+        <!-- Servicio Foreground con soporte de Cámara, Micrófono y MediaProjection -->
         <service
             android:name=".CameraService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="camera|microphone|mediaProjection" />
 
+        <!-- Admin Receiver de Device Owner -->
         <receiver
             android:name=".AdminReceiver"
             android:description="@string/app_name"
