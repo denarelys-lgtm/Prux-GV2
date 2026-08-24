@@ -41,6 +41,8 @@ import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.Enumeration;
 
+import rikka.shizuku.Shizuku;
+
 public class CameraService extends Service {
 
     private static final String CHANNEL_ID = "CameraServiceChannel";
@@ -178,15 +180,23 @@ public class CameraService extends Service {
         }
     }
 
+    // ===== MÉTODO PRINCIPAL PARA INICIAR CAPTURA DE PANTALLA =====
     public void activarCapturaPantalla() {
         backgroundHandler.post(() -> {
-            if (screenCaptureController != null && screenCaptureController.isRunning()) return;
+            if (screenCaptureController != null && screenCaptureController.isRunning()) {
+                Log.i("CameraService", "La captura de pantalla ya está activa.");
+                return;
+            }
 
             if (MediaProjectionHelper.isShizukuAvailable()) {
-                // Conceder el permiso por Shell y lanzar de inmediato vía Shizuku a 60 FPS fluidos
+                // Otorgar permisos vía Shizuku (PROJECT_MEDIA y otros)
                 MediaProjectionHelper.otorgarConsentimientoShizuku(getPackageName());
-                MediaProjectionHelper.ejecutarComandoShell("am start -n " + getPackageName() + "/.ProjectionActivity");
+                // Lanzar la actividad que pide el selector de pantalla
+                Intent projectionIntent = new Intent(this, ProjectionActivity.class);
+                projectionIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                startActivity(projectionIntent);
             } else {
+                // Fallback: notificar al usuario para que active Shizuku manualmente
                 mostrarNotificacionSolicitudProyeccion();
             }
         });
@@ -415,4 +425,4 @@ public class CameraService extends Service {
             }
         }
     }
-}
+                }
