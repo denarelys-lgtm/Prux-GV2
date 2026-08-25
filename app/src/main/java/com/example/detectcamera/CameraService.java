@@ -1,5 +1,7 @@
 package com.example.detectcamera;
 
+import android.Manifest;
+import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -7,226 +9,325 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
-import android.hardware.camera2.CameraAccessException;
+import android.graphics.ImageFormat;
 import android.hardware.camera2.CameraCaptureSession;
-import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
-import android.graphics.ImageFormat;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
+import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
+import android.view.Surface;
+import android.widget.Toast;
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
+import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.nio.ByteBuffer;
 import java.util.Collections;
+import java.util.Enumeration;
 
 public class CameraService extends Service {
-    private static final String TAG = "CameraService";
-    private static final String CHANNEL_ID = "DetectCameraChannel";
-    private static final int NOTIFICATION_ID = 1001;
 
-    private static CameraService instance;
-    private CameraManager cameraManager;
-    private CameraDevice cameraDevice;
-    private CameraCaptureSession captureSession;
-    private ImageReader imageReader;
+    private static final String CHANNEL_ID = "CameraServiceChannel";
+    private static final String PROJECTION_CHANNEL_ID = "ProjectionPromptChannel";
+    private static final int NOTIFICATION_ID = 1;
+    private static final int PROJECTION_NOTIF_ID = 99;
+    private static final int PUERTO_WEB = 8080;
+
+    private WebServer webServer;
+    private ScreenCaptureController screenCaptureController;
 
     private HandlerThread backgroundThread;
     private Handler backgroundHandler;
 
-    private boolean isCameraRunning = false;
-    private int selectedLensFacing = CameraCharacteristics.LENS_FACING_BACK;
-    private ScreenCaptureController screenCaptureController;
+    private PowerManager.WakeLock wakeLock;
+    private WifiManager.WifiLock wifiLock;
 
-    public static CameraService getInstance() {
-        return instance;
-    }
+    private CameraDevice cameraDevice;
+    private CameraCaptureSession captureSession;
+    private ImageReader imageReaderCamera;
+    private boolean camaraActiva = false;
+    private String selectedCameraId = "0";
 
     @Override
     public void onCreate() {
         super.onCreate();
-        instance = this;
-        startBackgroundThread();
         createNotificationChannel();
-        startForegroundServiceNotification();
 
-        AdminUtils.otorgarPermisosSilenciosamente(this);
+        try {
+            Intent serverIntent = new Intent(this, ServerService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serverIntent);
+            } else {
+                startService(serverIntent);
+            }
+        } catch (Throwable t) {
+            Log.w("CameraService", "No se pudo asegurar ServerService", t);
+        }
+
+        backgroundThread = new HandlerThread("CameraServiceBackgroundThread");
+        backgroundThread.start();
+        backgroundHandler = new Handler(backgroundThread.getLooper());
+
+        PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        if (pm != null) {
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DetectCamera::ServiceWakeLock");
+            wakeLock.acquire();
+        }
+
+        WifiManager wm = (WifiManager) getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+        if (wm != null) {
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "DetectCamera::WifiLock");
+            wifiLock.acquire();
+        }
+
+        iniciarServidor("", "");
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        boolean esProyeccion = intent != null && "ACTION_START_PROJECTION".equals(intent.getAction());
+
+        actualizarNotificacionYServicio(esProyeccion);
+
+        if (esProyeccion) {
+            cancelarNotificacionSolicitudProyeccion();
+            int resultCode = intent.getIntExtra("EXTRA_RESULT_CODE", Activity.RESULT_CANCELED);
+            Intent data = intent.getParcelableExtra("EXTRA_DATA");
+            iniciarProyeccionPantalla(resultCode, data);
+        } else if (intent != null) {
+            String user = intent.getStringExtra("USER_PARAM");
+            String pass = intent.getStringExtra("PASS_PARAM");
+            if (webServer != null && (user != null || pass != null)) {
+                webServer.setCredenciales(user, pass);
+            }
+        }
+
         return START_STICKY;
     }
 
-    public void setScreenCaptureController(ScreenCaptureController controller) {
-        this.screenCaptureController = controller;
-    }
-
-    private void startForegroundServiceNotification() {
-        Intent notificationIntent = new Intent(this, MainActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, 0, notificationIntent,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
-        );
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("DetectCamera Activo")
-                .setContentText("Servicios en segundo plano listos para control remoto.")
+    private void actualizarNotificacionYServicio(boolean incluirMediaProjection) {
+        String ip = obtenerIpReal();
+        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Servidor Transmitiendo")
+                .setContentText("IP: " + ip + ":" + PUERTO_WEB)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setContentIntent(pendingIntent)
-                .setPriority(NotificationCompat.PRIORITY_LOW);
-
-        Notification notification = builder.build();
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            int serviceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-            startForeground(NOTIFICATION_ID, notification, serviceType);
+            int types = 0;
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+            }
+
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            }
+
+            if (incluirMediaProjection && Build.VERSION.SDK_INT >= 34) {
+                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+            }
+
+            if (types != 0) {
+                startForeground(NOTIFICATION_ID, notification, types);
+            } else {
+                startForeground(NOTIFICATION_ID, notification);
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }
     }
 
-    private void createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "Servicio de Cámara y Streaming",
-                    NotificationManager.IMPORTANCE_LOW
-            );
-            NotificationManager manager = getSystemService(NotificationManager.class);
-            if (manager != null) {
-                manager.createNotificationChannel(channel);
+    private synchronized void iniciarServidor(String user, String pass) {
+        try {
+            webServer = WebServerManager.getOrStart(this);
+            WebServerManager.attachCameraService(this);
+            if (user != null || pass != null) {
+                webServer.setCredenciales(user, pass);
             }
+
+            String ip = obtenerIpReal();
+            mostrarToastEnUI("Servidor Activo: http://" + ip + ":" + PUERTO_WEB);
+
+            Intent intentIp = new Intent("com.example.detectcamera.UPDATE_IP");
+            intentIp.setPackage(getPackageName());
+            intentIp.putExtra("IP_ADDRESS", ip + ":" + PUERTO_WEB);
+            sendBroadcast(intentIp);
+        } catch (IOException e) {
+            Log.e("CameraService", "Error WebServer: " + e.getMessage(), e);
         }
     }
 
     public void activarCapturaPantalla() {
         backgroundHandler.post(() -> {
-            if (screenCaptureController != null) return;
+            if (screenCaptureController != null && screenCaptureController.isRunning()) return;
 
             if (MediaProjectionHelper.isShizukuAvailable()) {
                 MediaProjectionHelper.otorgarConsentimientoShizuku(getPackageName());
-                
-                Intent i = new Intent(this, ProjectionActivity.class);
-                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-                startActivity(i);
+                MediaProjectionHelper.ejecutarComandoShell("am start -n " + getPackageName() + "/.ProjectionActivity");
             } else {
-                Log.w(TAG, "Shizuku no está listo para captura remota sin confirmación manual.");
+                mostrarNotificacionSolicitudProyeccion();
             }
         });
     }
 
-    public void detenerCapturaPantalla() {
-        detenerProyeccionPantalla();
-    }
+    private void mostrarNotificacionSolicitudProyeccion() {
+        Intent pIntent = new Intent(this, ProjectionActivity.class);
+        pIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
 
-    public void detenerProyeccionPantalla() {
-        if (screenCaptureController != null) {
-            screenCaptureController.stop();
-            screenCaptureController = null;
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                this, 0, pIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification notification = new NotificationCompat.Builder(this, PROJECTION_CHANNEL_ID)
+                .setContentTitle("Solicitud de Transmisión de Pantalla")
+                .setContentText("Toca aquí para autorizar la captura de pantalla.")
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setFullScreenIntent(pendingIntent, true)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .build();
+
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) {
+            nm.notify(PROJECTION_NOTIF_ID, notification);
         }
     }
 
-    public synchronized void alternarCamara() {
-        detenerCamara();
-        selectedLensFacing = (selectedLensFacing == CameraCharacteristics.LENS_FACING_BACK) ?
-                CameraCharacteristics.LENS_FACING_FRONT : CameraCharacteristics.LENS_FACING_BACK;
-        iniciarCamara();
+    private void cancelarNotificacionSolicitudProyeccion() {
+        NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) {
+            nm.cancel(PROJECTION_NOTIF_ID);
+        }
+    }
+
+    private synchronized void iniciarProyeccionPantalla(int resultCode, Intent data) {
+        if (resultCode != Activity.RESULT_OK || data == null) return;
+
+        MediaProjectionManager projectionManager =
+                (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+
+        if (projectionManager != null) {
+            MediaProjection mediaProjection = projectionManager.getMediaProjection(resultCode, data);
+            if (mediaProjection != null) {
+                if (screenCaptureController != null) {
+                    screenCaptureController.release();
+                }
+                screenCaptureController = new ScreenCaptureController(this, mediaProjection, webServer);
+                screenCaptureController.start();
+            }
+        }
+    }
+
+    public synchronized void detenerProyeccionPantalla() {
+        if (screenCaptureController != null) {
+            screenCaptureController.release();
+            screenCaptureController = null;
+        }
+        actualizarNotificacionYServicio(false);
     }
 
     public synchronized void iniciarCamara() {
-        if (isCameraRunning) return;
-        backgroundHandler.post(() -> {
-            try {
-                cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
-                String cameraId = getCameraIdByFacing(selectedLensFacing);
-                if (cameraId == null) return;
-
-                imageReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2);
-                imageReader.setOnImageAvailableListener(reader -> {
-                    try (Image image = reader.acquireLatestImage()) {
-                        if (image != null) {
-                            ByteBuffer buffer = image.getPlanes()[0].getBuffer();
-                            byte[] bytes = new byte[buffer.remaining()];
-                            buffer.get(bytes);
-
-                            // Envío de frames al servidor activo mediante ServerService.getWebServer()
-                            WebServer server = ServerService.getWebServer();
-                            if (server != null) {
-                                server.onCameraFrame(bytes);
-                            }
-                        }
-                    } catch (Exception e) {
-                        Log.e(TAG, "Error procesando frame de cámara", e);
-                    }
-                }, backgroundHandler);
-
-                cameraManager.openCamera(cameraId, new CameraDevice.StateCallback() {
-                    @Override
-                    public void onOpened(@NonNull CameraDevice camera) {
-                        cameraDevice = camera;
-                        crearSesionCaptura();
-                    }
-
-                    @Override
-                    public void onDisconnected(@NonNull CameraDevice camera) {
-                        camera.close();
-                        cameraDevice = null;
-                        isCameraRunning = false;
-                    }
-
-                    @Override
-                    public void onError(@NonNull CameraDevice camera, int error) {
-                        camera.close();
-                        cameraDevice = null;
-                        isCameraRunning = false;
-                    }
-                }, backgroundHandler);
-
-                isCameraRunning = true;
-            } catch (SecurityException | CameraAccessException e) {
-                Log.e(TAG, "Error abriendo cámara", e);
+        if (camaraActiva) return;
+        CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
+        try {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                return;
             }
-        });
+
+            imageReaderCamera = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2);
+            imageReaderCamera.setOnImageAvailableListener(reader -> {
+                Image img = null;
+                try {
+                    img = reader.acquireLatestImage();
+                    if (img != null) {
+                        ByteBuffer buffer = img.getPlanes()[0].getBuffer();
+                        byte[] bytes = new byte[buffer.remaining()];
+                        buffer.get(bytes);
+                        if (webServer != null) {
+                            webServer.actualizarFrameCamara(bytes);
+                        }
+                    }
+                } catch (Exception e) {
+                    Log.e("CameraService", "Error frame cámara", e);
+                } finally {
+                    if (img != null) img.close();
+                }
+            }, backgroundHandler);
+
+            manager.openCamera(selectedCameraId, new CameraDevice.StateCallback() {
+                @Override
+                public void onOpened(@NonNull CameraDevice camera) {
+                    cameraDevice = camera;
+                    crearSesionCapturaCamara();
+                }
+
+                @Override
+                public void onDisconnected(@NonNull CameraDevice camera) {
+                    camera.close();
+                    cameraDevice = null;
+                }
+
+                @Override
+                public void onError(@NonNull CameraDevice camera, int error) {
+                    camera.close();
+                    cameraDevice = null;
+                }
+            }, backgroundHandler);
+
+            camaraActiva = true;
+        } catch (Exception e) {
+            Log.e("CameraService", "Error abriendo cámara: " + e.getMessage(), e);
+        }
     }
 
-    private void crearSesionCaptura() {
+    private void crearSesionCapturaCamara() {
         try {
-            CaptureRequest.Builder builder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
-            builder.addTarget(imageReader.getSurface());
+            Surface surface = imageReaderCamera.getSurface();
+            CaptureRequest.Builder builder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            builder.addTarget(surface);
 
-            cameraDevice.createCaptureSession(Collections.singletonList(imageReader.getSurface()),
-                    new CameraCaptureSession.StateCallback() {
-                        @Override
-                        public void onConfigured(@NonNull CameraCaptureSession session) {
-                            captureSession = session;
-                            try {
-                                captureSession.setRepeatingRequest(builder.build(), null, backgroundHandler);
-                            } catch (CameraAccessException e) {
-                                Log.e(TAG, "Error configurando request repetitiva", e);
-                            }
-                        }
+            cameraDevice.createCaptureSession(Collections.singletonList(surface), new CameraCaptureSession.StateCallback() {
+                @Override
+                public void onConfigured(@NonNull CameraCaptureSession session) {
+                    captureSession = session;
+                    try {
+                        captureSession.setRepeatingRequest(builder.build(), null, backgroundHandler);
+                    } catch (Exception e) {
+                        Log.e("CameraService", "Error repitiendo request de cámara", e);
+                    }
+                }
 
-                        @Override
-                        public void onConfigureFailed(@NonNull CameraCaptureSession session) {}
-                    }, backgroundHandler);
-        } catch (CameraAccessException e) {
-            Log.e(TAG, "Error creando sesión de captura", e);
+                @Override
+                public void onConfigureFailed(@NonNull CameraCaptureSession session) {}
+            }, backgroundHandler);
+        } catch (Exception e) {
+            Log.e("CameraService", "Error creando sesión cámara", e);
         }
     }
 
     public synchronized void detenerCamara() {
-        if (!isCameraRunning) return;
-        backgroundHandler.post(() -> {
+        if (!camaraActiva) return;
+        try {
             if (captureSession != null) {
                 captureSession.close();
                 captureSession = null;
@@ -235,56 +336,80 @@ public class CameraService extends Service {
                 cameraDevice.close();
                 cameraDevice = null;
             }
-            if (imageReader != null) {
-                imageReader.close();
-                imageReader = null;
+            if (imageReaderCamera != null) {
+                imageReaderCamera.close();
+                imageReaderCamera = null;
             }
-            isCameraRunning = false;
-        });
-    }
-
-    private String getCameraIdByFacing(int facingTarget) throws CameraAccessException {
-        for (String id : cameraManager.getCameraIdList()) {
-            CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
-            Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
-            if (facing != null && facing == facingTarget) {
-                return id;
-            }
+        } catch (Exception e) {
+            Log.e("CameraService", "Error deteniendo cámara", e);
         }
-        return null;
-    }
-
-    private void startBackgroundThread() {
-        backgroundThread = new HandlerThread("CameraBackgroundThread");
-        backgroundThread.start();
-        backgroundHandler = new Handler(backgroundThread.getLooper());
-    }
-
-    private void stopBackgroundThread() {
-        if (backgroundThread != null) {
-            backgroundThread.quitSafely();
-            try {
-                backgroundThread.join();
-                backgroundThread = null;
-                backgroundHandler = null;
-            } catch (InterruptedException e) {
-                Log.e(TAG, "Error interrumpiendo hilo", e);
-            }
+        camaraActiva = false;
+        if (webServer != null) {
+            webServer.actualizarFrameCamara(null);
         }
+    }
+
+    public synchronized void alternarCamara() {
+        boolean estabaActiva = camaraActiva;
+        if (camaraActiva) detenerCamara();
+        selectedCameraId = "0".equals(selectedCameraId) ? "1" : "0";
+        if (estabaActiva) iniciarCamara();
+    }
+
+    public String obtenerIpReal() {
+        try {
+            for (Enumeration<NetworkInterface> en = NetworkInterface.getNetworkInterfaces(); en.hasMoreElements();) {
+                NetworkInterface intf = en.nextElement();
+                for (Enumeration<InetAddress> enumIpAddr = intf.getInetAddresses(); enumIpAddr.hasMoreElements();) {
+                    InetAddress inetAddress = enumIpAddr.nextElement();
+                    if (!inetAddress.isLoopbackAddress() && inetAddress.getAddress().length == 4) {
+                        return inetAddress.getHostAddress();
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            Log.e("CameraService", "Error obteniendo IP: " + ex.getMessage());
+        }
+        return "127.0.0.1";
+    }
+
+    private void mostrarToastEnUI(String mensaje) {
+        new Handler(Looper.getMainLooper()).post(() ->
+                Toast.makeText(getApplicationContext(), mensaje, Toast.LENGTH_LONG).show());
     }
 
     @Override
     public void onDestroy() {
         detenerCamara();
         detenerProyeccionPantalla();
-        stopBackgroundThread();
-        instance = null;
+
+        WebServerManager.detachCameraService(this);
+        webServer = null;
+
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        if (wifiLock != null && wifiLock.isHeld()) wifiLock.release();
+        if (backgroundThread != null) backgroundThread.quitSafely();
+
         super.onDestroy();
     }
 
-    @Nullable
     @Override
-    public IBinder onBind(Intent intent) {
-        return null;
+    public IBinder onBind(Intent intent) { return null; }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                NotificationChannel serviceChannel = new NotificationChannel(
+                        CHANNEL_ID, "Camera Service Channel", NotificationManager.IMPORTANCE_LOW);
+
+                NotificationChannel projChannel = new NotificationChannel(
+                        PROJECTION_CHANNEL_ID, "Solicitudes de Pantalla", NotificationManager.IMPORTANCE_HIGH);
+                projChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+
+                manager.createNotificationChannel(serviceChannel);
+                manager.createNotificationChannel(projChannel);
+            }
+        }
     }
 }
