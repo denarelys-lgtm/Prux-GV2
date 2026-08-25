@@ -25,7 +25,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
@@ -56,8 +55,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Actividad Transparente para Iniciar MediaProjection -->
-        <!-- Arranque automático del servidor después del reinicio. -->
+        <!-- Arranque automático del servidor después del reinicio -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
@@ -69,7 +67,7 @@
             </intent-filter>
         </receiver>
 
-        <!-- Servicio que mantiene vivo únicamente el servidor. -->
+        <!-- Servicio que mantiene vivo únicamente el servidor -->
         <service
             android:name=".ServerService"
             android:enabled="true"
@@ -81,6 +79,7 @@
                 android:value="persistent local HTTP server for user-requested LAN streaming" />
         </service>
 
+        <!-- Actividad Transparente para Iniciar MediaProjection -->
         <activity
             android:name=".ProjectionActivity"
             android:exported="true"
@@ -89,12 +88,12 @@
             android:noHistory="true"
             android:launchMode="singleInstance" />
 
-        <!-- Servicio Foreground con soporte de Cámara, Micrófono y MediaProjection -->
+        <!-- Servicio Foreground con soporte de Cámara y MediaProjection -->
         <service
             android:name=".CameraService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="camera|microphone|mediaProjection" />
+            android:foregroundServiceType="camera|mediaProjection" />
 
         <!-- Admin Receiver de Device Owner -->
         <receiver
