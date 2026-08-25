@@ -146,9 +146,14 @@ public class CameraService extends Service {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
             }
 
-            if (types != 0) {
-                startForeground(NOTIFICATION_ID, notification, types);
-            } else {
+            try {
+                if (types != 0) {
+                    startForeground(NOTIFICATION_ID, notification, types);
+                } else {
+                    startForeground(NOTIFICATION_ID, notification);
+                }
+            } catch (SecurityException e) {
+                Log.e("CameraService", "Permisos insuficientes para tipos de FGS especificos, iniciando modo basico", e);
                 startForeground(NOTIFICATION_ID, notification);
             }
         } else {
