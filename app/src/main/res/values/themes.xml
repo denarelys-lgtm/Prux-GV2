@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.TestApp" parent="Theme.AppCompat.Light.NoActionBar">
-        <item name="colorPrimary">#6200EE</item>
-        <item name="colorPrimaryVariant">#3700B3</item>
-        <item name="colorOnPrimary">@android:color/white</item>
+    <style name="Theme.MaterialComponents.DayNight.NoActionBar" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Colores principales -->
+        <item name="colorPrimary">#00E676</item>
+        <item name="colorPrimaryVariant">#00A352</item>
+        <item name="colorOnPrimary">#000000</item>
+        
+        <!-- Colores de fondo -->
+        <item name="android:statusBarColor">#121212</item>
+        <item name="android:windowBackground">#121212</item>
     </style>
 </resources>
