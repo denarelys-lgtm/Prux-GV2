@@ -67,6 +67,10 @@ public class CameraService extends Service {
         return START_STICKY;
     }
 
+    public void setScreenCaptureController(ScreenCaptureController controller) {
+        this.screenCaptureController = controller;
+    }
+
     private void startForegroundServiceNotification() {
         Intent notificationIntent = new Intent(this, MainActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
@@ -107,7 +111,7 @@ public class CameraService extends Service {
 
     public void activarCapturaPantalla() {
         backgroundHandler.post(() -> {
-            if (screenCaptureController != null && screenCaptureController.isRunning()) return;
+            if (screenCaptureController != null) return;
 
             if (MediaProjectionHelper.isShizukuAvailable()) {
                 MediaProjectionHelper.otorgarConsentimientoShizuku(getPackageName());
@@ -125,10 +129,10 @@ public class CameraService extends Service {
         detenerProyeccionPantalla();
     }
 
-    // Alias para compatibilidad con WebServer.java
     public void detenerProyeccionPantalla() {
         if (screenCaptureController != null) {
-            screenCaptureController.detenerCaptura();
+            screenCaptureController.stop();
+            screenCaptureController = null;
         }
     }
 
@@ -155,10 +159,10 @@ public class CameraService extends Service {
                             byte[] bytes = new byte[buffer.remaining()];
                             buffer.get(bytes);
 
-                            // Envío de frames directo al servidor web activo
-                            WebServer server = ServerService.getWebServerInstance();
+                            // Envío de frames al servidor activo mediante ServerService.getWebServer()
+                            WebServer server = ServerService.getWebServer();
                             if (server != null) {
-                                server.broadcastCameraFrame(bytes);
+                                server.onCameraFrame(bytes);
                             }
                         }
                     } catch (Exception e) {
