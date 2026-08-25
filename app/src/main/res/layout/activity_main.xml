@@ -3,55 +3,42 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="16dp"
-    android:gravity="center_horizontal">
+    android:padding="24dp"
+    android:gravity="center"
+    android:background="#121212">
+
+    <ImageView
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:src="@android:drawable/ic_menu_camera"
+        android:tint="#00E676"
+        android:layout_marginBottom="24dp" />
 
     <TextView
-        android:id="@+id/tvTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Servidor de Transmisión"
+        android:text="DetectCamera Server"
         android:textSize="22sp"
+        android:textColor="#FFFFFF"
         android:textStyle="bold"
-        android:layout_marginBottom="12dp" />
+        android:layout_marginBottom="8dp" />
 
     <TextView
-        android:id="@+id/tvIpAddress"
+        android:id="@+id/txtIpStatus"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="IP: Desconectado"
         android:textSize="16sp"
         android:textColor="#00E676"
         android:textStyle="bold"
-        android:layout_marginBottom="16dp" />
+        android:layout_marginBottom="24dp" />
 
-    <EditText
-        android:id="@+id/etUsername"
-        android:layout_width="match_parent"
+    <TextView
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:hint="Usuario del panel"
-        android:inputType="text"
-        android:layout_marginBottom="8dp" />
-
-    <EditText
-        android:id="@+id/etPassword"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Contraseña del panel"
-        android:inputType="textPassword"
-        android:layout_marginBottom="16dp" />
-
-    <Button
-        android:id="@+id/btnStartServer"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Iniciar Servidor"
-        android:layout_marginBottom="16dp" />
-
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewView"
-        android:layout_width="match_parent"
-        android:layout_height="200dp"
-        android:background="#222222" />
+        android:text="Los servicios iniciarán automáticamente al encender el teléfono. Controla todo desde el panel web."
+        android:textSize="14sp"
+        android:textColor="#B0BEC5"
+        android:gravity="center" />
 
 </LinearLayout>
