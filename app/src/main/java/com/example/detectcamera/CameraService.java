@@ -138,10 +138,6 @@ public class CameraService extends Service {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
             }
 
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
-            }
-
             if (incluirMediaProjection && Build.VERSION.SDK_INT >= 34) {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
             }
@@ -153,7 +149,7 @@ public class CameraService extends Service {
                     startForeground(NOTIFICATION_ID, notification);
                 }
             } catch (SecurityException e) {
-                Log.e("CameraService", "Permisos insuficientes para tipos de FGS especificos, iniciando modo basico", e);
+                Log.e("CameraService", "Error al iniciar FGS especifico, aplicando modo basico", e);
                 startForeground(NOTIFICATION_ID, notification);
             }
         } else {
