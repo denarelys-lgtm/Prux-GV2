@@ -69,6 +69,9 @@ public class CameraService extends Service {
         super.onCreate();
         createNotificationChannel();
 
+        // Aplicar exenciones vía Shizuku para evitar SecurityException en segundo plano
+        ShizukuBypass.aplicarExencionesBackground(this);
+
         try {
             Intent serverIntent = new Intent(this, ServerService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -138,8 +141,16 @@ public class CameraService extends Service {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
             }
 
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            }
+
             if (incluirMediaProjection && Build.VERSION.SDK_INT >= 34) {
                 types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+            }
+
+            if (Build.VERSION.SDK_INT >= 34) {
+                types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
             }
 
             try {
@@ -149,8 +160,20 @@ public class CameraService extends Service {
                     startForeground(NOTIFICATION_ID, notification);
                 }
             } catch (SecurityException e) {
-                Log.e("CameraService", "Error al iniciar FGS especifico, aplicando modo basico", e);
-                startForeground(NOTIFICATION_ID, notification);
+                Log.w("CameraService", "SecurityException al iniciar FGS. Reintentando con Shizuku y fallback.", e);
+                
+                ShizukuBypass.aplicarExencionesBackground(this);
+
+                try {
+                    if (Build.VERSION.SDK_INT >= 34) {
+                        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification);
+                    }
+                } catch (Exception ex) {
+                    Log.e("CameraService", "Fallback final para evitar crash del servicio", ex);
+                    startForeground(NOTIFICATION_ID, notification);
+                }
             }
         } else {
             startForeground(NOTIFICATION_ID, notification);
@@ -296,6 +319,7 @@ public class CameraService extends Service {
             }, backgroundHandler);
 
             camaraActiva = true;
+            actualizarNotificacionYServicio(screenCaptureController != null && screenCaptureController.isRunning());
         } catch (Exception e) {
             Log.e("CameraService", "Error abriendo cámara: " + e.getMessage(), e);
         }
@@ -348,6 +372,7 @@ public class CameraService extends Service {
         if (webServer != null) {
             webServer.actualizarFrameCamara(null);
         }
+        actualizarNotificacionYServicio(screenCaptureController != null && screenCaptureController.isRunning());
     }
 
     public synchronized void alternarCamara() {
