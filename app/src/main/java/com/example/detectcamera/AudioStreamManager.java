@@ -4,6 +4,7 @@ import android.annotation.SuppressLint;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
+import android.os.Process; // <-- IMPORTANTE
 import android.util.Log;
 
 import java.io.InputStream;
@@ -15,7 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public class AudioStreamManager {
 
     private static final String TAG = "AudioStreamManager";
-    private static final int SAMPLE_RATE = 16000;
+    // 1. Cambiamos a la frecuencia nativa de hardware para evitar re-muestreo
+    private static final int SAMPLE_RATE = 48000; 
     private static final int CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO;
     private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
 
@@ -29,8 +31,9 @@ public class AudioStreamManager {
     public synchronized void iniciarSiEsNecesario() {
         if (isRecording) return;
 
+        // 2. Calculamos el búfer mínimo del chip de audio
         int minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT);
-        int bufferSize = Math.max(minBufferSize, 4096);
+        int bufferSize = Math.max(minBufferSize, 2048);
 
         try {
             audioRecord = new AudioRecord(
@@ -50,7 +53,11 @@ public class AudioStreamManager {
             isRecording = true;
 
             recordingThread = new Thread(() -> {
-                byte[] buffer = new byte[2048];
+                // 3. Dar prioridad máxima de audio al hilo para que HyperOS no lo demore
+                Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+
+                // Bloques pequeños de 1 KB para transmisión inmediata
+                byte[] buffer = new byte[1024];
                 while (isRecording && !Thread.currentThread().isInterrupted()) {
                     int read = audioRecord.read(buffer, 0, buffer.length);
                     if (read > 0) {
@@ -60,7 +67,7 @@ public class AudioStreamManager {
             }, "AudioRecordThread");
 
             recordingThread.start();
-            Log.i(TAG, "Captura de micrófono iniciada en segundo plano.");
+            Log.i(TAG, "Captura de micrófono de baja latencia iniciada.");
         } catch (Exception e) {
             Log.e(TAG, "Error iniciando captura de micrófono: " + e.getMessage());
         }
@@ -70,7 +77,7 @@ public class AudioStreamManager {
         for (PipedOutputStream pos : clientes) {
             try {
                 pos.write(data, 0, length);
-                pos.flush();
+                pos.flush(); // Forzamos la salida instantánea por el pipe
             } catch (Exception e) {
                 cerrarCliente(pos);
             }
@@ -80,7 +87,8 @@ public class AudioStreamManager {
     public InputStream crearAudioStreamCliente() {
         try {
             PipedOutputStream pos = new PipedOutputStream();
-            PipedInputStream pis = new PipedInputStream(pos, 65536) {
+            // 4. Reducimos el búfer interno del pipe para no acumular paquetes antiguos
+            PipedInputStream pis = new PipedInputStream(pos, 8192) {
                 @Override
                 public void close() throws java.io.IOException {
                     super.close();
