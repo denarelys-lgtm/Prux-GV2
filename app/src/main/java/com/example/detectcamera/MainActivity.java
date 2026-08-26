@@ -54,15 +54,18 @@ public class MainActivity extends AppCompatActivity {
 
         verificarYSolicitarPermisos();
         verificarYPedirShizuku();
+
+        // Ejecutar exenciones de ejecución en background mediante Shizuku
+        ShizukuBypass.aplicarExencionesBackground(this);
     }
 
     private void verificarYPedirShizuku() {
         try {
             if (Shizuku.pingBinder()) {
                 if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Shizuku ya autorizado", Toast.LENGTH_SHORT).show();
+                    // Aplicar exenciones cuando el binder esté activo y autorizado
+                    ShizukuBypass.aplicarExencionesBackground(this);
                 } else {
-                    // Solicita el permiso directamente lanzando la ventana emergente
                     Shizuku.requestPermission(SHIZUKU_CODE);
                 }
             } else {
@@ -77,6 +80,7 @@ public class MainActivity extends AppCompatActivity {
         if (requestCode == SHIZUKU_CODE) {
             if (grantResult == PackageManager.PERMISSION_GRANTED) {
                 Toast.makeText(this, "Shizuku vinculado con éxito", Toast.LENGTH_SHORT).show();
+                ShizukuBypass.aplicarExencionesBackground(this);
             } else {
                 Toast.makeText(this, "Permiso de Shizuku denegado", Toast.LENGTH_SHORT).show();
             }
@@ -147,7 +151,6 @@ public class MainActivity extends AppCompatActivity {
         } else {
             registerReceiver(receiverIp, new IntentFilter("com.example.detectcamera.UPDATE_IP"));
         }
-        // Vuelve a comprobar el estado de Shizuku al volver a primer plano
         verificarYPedirShizuku();
     }
 
