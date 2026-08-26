@@ -25,6 +25,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
@@ -88,12 +89,16 @@
             android:noHistory="true"
             android:launchMode="singleInstance" />
 
-        <!-- Servicio Foreground con soporte de Cámara y MediaProjection -->
+        <!-- Servicio Foreground para Cámara, Micrófono y MediaProjection -->
         <service
             android:name=".CameraService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="camera|mediaProjection" />
+            android:foregroundServiceType="specialUse|camera|microphone|mediaProjection">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="background streaming and camera service" />
+        </service>
 
         <!-- Admin Receiver de Device Owner -->
         <receiver
