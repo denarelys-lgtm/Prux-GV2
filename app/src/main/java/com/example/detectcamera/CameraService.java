@@ -51,6 +51,7 @@ public class CameraService extends Service {
 
     private WebServer webServer;
     private ScreenCaptureController screenCaptureController;
+    private MediaProjection activeMediaProjection;
 
     private HandlerThread backgroundThread;
     private Handler backgroundHandler;
@@ -253,6 +254,7 @@ public class CameraService extends Service {
         if (projectionManager != null) {
             MediaProjection mediaProjection = projectionManager.getMediaProjection(resultCode, data);
             if (mediaProjection != null) {
+                this.activeMediaProjection = mediaProjection;
                 if (screenCaptureController != null) {
                     screenCaptureController.release();
                 }
@@ -262,11 +264,16 @@ public class CameraService extends Service {
         }
     }
 
+    public synchronized MediaProjection getMediaProjection() {
+        return this.activeMediaProjection;
+    }
+
     public synchronized void detenerProyeccionPantalla() {
         if (screenCaptureController != null) {
             screenCaptureController.release();
             screenCaptureController = null;
         }
+        this.activeMediaProjection = null;
         actualizarNotificacionYServicio(false);
     }
 
